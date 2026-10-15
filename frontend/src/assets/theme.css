@@ -1,0 +1,59 @@
+/* 全局科技风主题，使用统一变量保持不同工作页面的视觉一致 */
+:root {
+  color-scheme: dark;
+  --bg: #07111f;
+  --panel: #0d1c2e;
+  --panel-soft: #102237;
+  --line: #20364c;
+  --text: #e3edf9;
+  --muted: #91a7bf;
+  --cyan: #63d3eb;
+  --accent: #367af5;
+  font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  background: radial-gradient(ellipse at 80% 0, #12304d55, transparent 50%), var(--bg);
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+a {
+  color: var(--cyan);
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+}
+::selection {
+  background: #236380;
+  color: white;
+}
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-thumb {
+  background: #28415a;
+  border-radius: 8px;
+}
