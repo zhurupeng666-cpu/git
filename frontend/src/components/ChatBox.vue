@@ -92,6 +92,9 @@
             <div class="source-title">📄 来源文档</div>
             <div v-for="(source, i) in msg.sources" :key="i" class="source-item">
               {{ source.file_name }}
+              <!-- 扫描资料保留原始页码和区域，便于回到原文复核。 -->
+              <span v-if="source.location"> · {{ source.location }}</span>
+              <span v-else-if="source.page"> · 第{{ source.page }}页</span>
             </div>
           </div>
         </article>

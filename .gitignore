@@ -7,6 +7,7 @@
 
 # Python、前端和编辑器生成文件。
 .venv/
+.ocr-venv/
 venv/
 __pycache__/
 *.py[cod]

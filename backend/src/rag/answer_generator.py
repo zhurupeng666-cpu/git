@@ -80,11 +80,16 @@ class AnswerGenerator:
         """获取PDF页码或DOCX章节位置。"""
 
         if metadata.get("file_type") == "pdf" and metadata.get("page_number") is not None:
-            return f"第{metadata['page_number']}页"
+            location = f"第{metadata['page_number']}页"
+            if metadata.get("block_indices"):
+                location += "，区域" + ",".join(str(index+1) for index in metadata["block_indices"])
+            return location
 
         if metadata.get("file_type") == "docx":
             return metadata.get("section_title") or f"第{metadata.get('section_index', '未知')}节"
 
+        if metadata.get("file_type") in {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"}:
+            return "图片区域" + ",".join(str(index+1) for index in metadata.get("block_indices", []))
         return "未提供定位信息"
 
     def _build_context(self, documents: list[dict]) -> str:
@@ -96,10 +101,14 @@ class AnswerGenerator:
             metadata = document.get("metadata") or {}
             file_name = metadata.get("file_name", "未知文件")
             location = self._get_location(metadata)
+            provenance = ""
+            if metadata.get("document_origin") == "public_source_synthesis":
+                provenance = "资料性质：公开来源中文综述，AI辅助编写，非企业受控SOP。\n"
 
             context_parts.append(
                 f"[{index}] 文件：{file_name}\n"
                 f"位置：{location}\n"
+                f"{provenance}"
                 f"正文：{document['content']}"
             )
 

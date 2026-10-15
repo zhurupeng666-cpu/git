@@ -491,7 +491,11 @@ class RAGPipeline:
                 "domain": metadata.get("domain"),
                 "title": metadata.get("section_title") or metadata.get("title"),
                 "page": metadata.get("page_number"),
-                "chunk_id": doc.get("chunk_id", metadata.get("chunk_id"))
+                "chunk_id": doc.get("chunk_id", metadata.get("chunk_id")),
+                "location": AnswerGenerator._get_location(metadata),
+                "regions": metadata.get("regions", []),
+                "parse_method": metadata.get("parse_method"),
+                "quality_status": metadata.get("quality_status")
             })
         # 来源可在等待首个模型 token 时显示。
         yield {"type": "source", "sources": sources}

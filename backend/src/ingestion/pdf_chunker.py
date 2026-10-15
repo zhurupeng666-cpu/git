@@ -52,6 +52,19 @@ def split_pdf_by_page(
     """
 
     file_path = Path(file_path)
+    # 原生资料保持原切分与ID；扫描/混合资料接入隔离OCR及质量门禁。
+    from src.ingestion.pdf_page_parser import inspect_pdf
+    if any(page["mode"] in ("ocr", "mixed") for page in inspect_pdf(file_path)):
+        from src.ingestion.ingestion_service import parse_document, ROOT
+        knowledge_root = ROOT / "data/knowledge_base"
+        actual_root = knowledge_root if file_path.resolve().is_relative_to(knowledge_root.resolve()) else file_path.resolve().parent
+        parsed = parse_document(file_path, root=actual_root)
+        for chunk in parsed["chunks"]:
+            chunk.metadata["domain"] = domain
+        if parsed["review_items"]:
+            import logging
+            logging.getLogger(__name__).warning("OCR有%d个待复核区域；正式导入请使用ingest_documents.py保留报告", len(parsed["review_items"]))
+        return parsed["chunks"]
     reader = PdfReader(
         str(file_path)
     )

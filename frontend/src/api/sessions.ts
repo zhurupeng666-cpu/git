@@ -7,6 +7,10 @@ export interface ChatSource {
   title?: string
   page?: number
   chunk_id?: string
+  location?: string
+  regions?: number[][]
+  parse_method?: string
+  quality_status?: string
 }
 
 // 会话信息

@@ -1,3 +1,4 @@
+from src.rag.index_snapshot import RefreshableBM25
 import jieba
 import psycopg
 
@@ -27,6 +28,8 @@ class KeywordBM25Retriever:
         self.bm25 = BM25Okapi(
             self.tokenized_corpus
         )
+        self.index_snapshot = RefreshableBM25(self.db_url, self._load_documents, self._tokenize,
+                                              self._build_index_text, self.documents, self.bm25)
 
 
     def _load_documents(self):
@@ -41,7 +44,7 @@ class KeywordBM25Retriever:
                         r.metadata,
                         e.keywords
                     FROM rag_chunks r
-                    JOIN rag_chunk_expansions e
+                    LEFT JOIN rag_chunk_expansions e
                         ON r.chunk_id = e.chunk_id
                     ORDER BY r.chunk_id
                 """)
@@ -93,9 +96,13 @@ class KeywordBM25Retriever:
         query: str,
         top_k: int = 10
     ):
+        # 查询全程固定快照，发布后最多在轮询间隔内自动发现新索引。
+        documents, model = self.index_snapshot.get()
+        if not documents:
+            return []
         query_tokens = self._tokenize(query)
 
-        scores = self.bm25.get_scores(
+        scores = model.get_scores(
             query_tokens
         )
 
@@ -107,7 +114,7 @@ class KeywordBM25Retriever:
         results = []
 
         for index in top_indices:
-            document = self.documents[index]
+            document = documents[index]
 
             results.append(
                 {

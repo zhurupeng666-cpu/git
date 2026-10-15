@@ -1,6 +1,6 @@
 # 半导体智能知识库
 
-Vue + FastAPI + LangGraph 单 Agent 项目，结合 PostgreSQL / pgvector、BGE-M3 编码、BGE 重排与外部模型接口。
+Vue + FastAPI + LangGraph 单 Agent 半导体知识库项目，结合 PostgreSQL / pgvector、BGE-M3、多路召回、BGE 重排、外部模型接口，以及图片和扫描 PDF 的 OCR 入库。支持知识问答、材料数据查询与报告、人工咨询和持久化会话记忆。
 
 ## 技术栈与实现细节
 
@@ -94,12 +94,53 @@ flowchart TD
 | LangGraph PostgresSaver | `langgraph-checkpoint-postgres==3.1.2`，持久化对话状态、历史消息和摘要进度 |
 | LangGraph PostgresStore | 按用户命名空间保存长期资料及偏好 |
 | 材料工具 | 通过预定义工具执行库存、流水、期初/期末和出入库统计；报表根据统计结果生成文本，当前不是允许模型自由执行任意 SQL |
-| PDF / Word 解析 | 主入库入口使用 `pypdf==6.19.0` 与 `python-docx==1.2.0`，分别按 PDF 页和 Word 一级标题进行基础结构切分 |
+| 原生 PDF / Word 解析 | 原生资料兼容入口使用 `pypdf==6.19.0` 与 `python-docx==1.2.0`，分别按 PDF 页和 Word 一级标题进行基础结构切分 |
 | 通用加载器 | 另有基于 LangChain Community、docx2txt、python-pptx 的加载实现；不代表主入库入口已经覆盖所有格式 |
 
-导入时为 Chunk 生成位置相关 ID，通过 UPSERT 写入正文、元数据和向量。当前不具备完整的文档版本审批、旧 Chunk 自动失效、OCR 与索引原子发布能力。BM25 在初始化时读取数据，更新数据库后需考虑进程内索引刷新。
+原生 PDF 的兼容切分入口保留按页切片，Word 按一级标题分段；新统一导入入口加入 Token 预算和扫描资料的结构化切片。发布前检查源文件哈希并备份知识表，正文、扩展索引和文档版本在一个 PostgreSQL 事务内提交或回滚。同来源的新版本替换该来源的旧切片，文件与解析配置未变化时跳过重复发布。新版本仍有待复核区域时保留旧版。BM25 默认每 5 秒检查发布标记并切换进程内快照；它与数据库查询之间存在刷新间隔，不能描述为所有运行中查询同时原子切换。
 
 入口：[业务工具](backend/src/tools/material_tools.py)、[材料报告](backend/src/reporting/material_report.py)、[主切分流程](backend/src/ingestion/knowledge_base_chunker.py)、[入库脚本](backend/src/database/rag_ingest.py)。
+
+### 图片与扫描 PDF：OCR 解析和可追溯入库
+
+当前实现属于 **OCR 增强的文本 RAG**：图片先被识别为文字和表格，再由 BGE-M3 文本编码。不使用图像嵌入检索，也不自动理解设备结构图、曲线或显微缺陷。
+
+| 环节 | 技术与实际行为 |
+|---|---|
+| 环境隔离 | 业务后端 Python 3.14；OCR 使用独立 Python 3.11 `.ocr-venv` 子进程，不向原后端安装 Paddle |
+| OCR 引擎 | PaddleOCR `3.3.2` / PP-StructureV3、PaddlePaddle CPU `3.2.2`、PaddleX `3.3.13`，依赖锁定在独立 requirements 文件 |
+| 页面分类 | pypdf 检查文字质量和图像覆盖情况；原生页直接提取，扫描及大图混合页整页 OCR，空白页跳过 |
+| 渲染与图片 | pypdfium2 将 PDF 逐页渲染，默认 180 DPI；Pillow 处理图片、EXIF 方向及透明背景，支持直角方向校正和原页坐标回映 |
+| 文字与版面 | PP-OCRv5 mobile 检测和识别文字，版面模型区分标题、正文、表格和图像区域；页眉页脚及边缘页码过滤 |
+| 表格 | 解析 HTML 行列及合并单元格，输出结构化行列与 Markdown；保留原表格 HTML，拆片时重复表头 |
+| 质量门禁 | 默认块置信度至少 0.85，数字与部分单位所在行低于 0.90 时待复核；检查乱码、异常分隔符、缺失表格结构等。置信度不等于事实准确率 |
+| 图示与复核 | 图示、图表和公式进入待复核记录；本地逐块校正文字、表格或补充图示描述，保留复核者、理由、原文哈希和校正审计 |
+| 结构切片 | 默认 600 参考 Token，按页面、标题、段落和表格组织，保留来源 SHA-256、页码、块序号、归一化区域坐标和质量状态 |
+| 编码与辅助索引 | 每片 1 条正文向量；生成摘要、5 个扩展问题和关键词，摘要与问题另编码成 6 条向量；BGE-M3 1024 维，入库前验证维度与有限数 |
+| 受控发布 | 默认只预览；显式 `--publish` 才先执行 pg_dump 并检查备份目录，再事务发布。首次导入可只发布通过门禁的区域，待复核区域不进检索 |
+| 缓存与资源 | CPU 两线程，文件串行且跨进程文件锁；逐页缓存可删除，删除不影响数据库问答，但重新解析时需重做 OCR |
+| 来源与去重 | 回答来源包含页码、区域和解析方式，前端展示定位；同源配套知识图默认关联 PDF，避免重复入库加权 |
+
+```mermaid
+flowchart TD
+    Files[图片与 PDF] --> Detect[逐页分类]
+    Detect --> Native[原生文字提取]
+    Detect --> OCR[隔离 OCR 与版面识别]
+    OCR --> Gate[质量门禁与逐块复核]
+    Gate --> Pending[待复核区域保留]
+    Gate --> Chunks[通过区域结构切片]
+    Native --> Chunks
+    Chunks --> Encode[BGE 正文及辅助向量]
+    Encode --> Publish[备份后事务发布 PostgreSQL]
+    Publish --> Search[原有多路召回与重排]
+    Search --> Answer[流式回答与来源定位]
+```
+
+OCR 只在导入资料时执行，日常问答直接检索已入库的文本和向量。OCR 本身在本机运行；摘要、扩展问题和最终回答仍调用配置的外部模型。
+
+文件限制为 100 MB / 1000 页；单页图像上限 2500 万像素，多帧图片需先转逐页 PDF。当前未启用公式、印章或图表语义识别，未实现点击引用高亮原图的浏览器。独立 OCR 进程和版本记录不改变单 Agent 架构，也不等同于完整的企业审批系统。
+
+实现与操作：[OCR 使用说明](backend/docs/ocr_ingestion.md)、[本机验收记录](backend/docs/ocr_ingestion_acceptance.md)、[导入入口](backend/scripts/ingest_documents.py)、[逐块复核](backend/scripts/review_ocr_blocks.py)、[发布事务](backend/src/ingestion/ingestion_publisher.py)、[BM25 快照](backend/src/rag/index_snapshot.py)。验收文档中的本机资料、备份和运行产物不随源码上传。
 
 ### 短期记忆、长期记忆与 Token 预算
 
@@ -161,6 +202,7 @@ flowchart TD
 ## 功能
 
 - 半导体工艺、设备维护、故障排查与规范问答，支持 SSE 输出和来源展示。
+- 图片、扫描及混合 PDF 的 OCR 解析、表格提取、质量复核、结构切片和版本化事务入库。
 - 当前库存、出入库流水、周期库存统计，以及按材料范围生成周报、月报。
 - 工程师待处理队列、人工接单和回复。
 - 登录会话、Tab Token、会话历史、短期上下文、增量摘要及长期记忆。
@@ -172,10 +214,12 @@ flowchart TD
 backend/                 后端、导入脚本和测试
   src/                   业务源码
   tests/                 自动回归
-  scripts/               启动、Tokenizer准备、记忆测试和压测
+  scripts/               启动、OCR导入/复核、迁移、记忆测试和压测
+  docs/                  OCR操作与本机验收说明
   data/dictionaries/     专业分词词典
   .env.example           配置模板，不含真实凭证
-  requirements.lock.txt 当前Windows开发与评测环境的完整依赖快照
+  requirements.lock.txt 当前Windows后端与评测环境的依赖快照
+  requirements-ocr*.txt 独立Python 3.11 OCR环境依赖
 frontend/                Vue前端及package-lock.json
 ```
 
@@ -222,12 +266,39 @@ npm run dev
 
 访问 `http://localhost:5173`，前端开发代理将 `/api` 转发到后端。此处为本地开发步骤，正式发布需要HTTPS、静态文件托管、反向代理和服务托管。
 
+## OCR 环境与资料入库（可选）
+
+在 `backend` 目录使用独立 Python 3.11 安装 OCR；不用它替换业务后端的 Python 3.14 环境：
+
+```powershell
+.\scripts\setup_ocr.ps1
+```
+
+将自有资料放入 `backend/data/knowledge_base/`，先预览：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/ingest_documents.py
+```
+
+核对输出预览中的切片与待复核项，必要时使用 `scripts/review_ocr_blocks.py` 生成新复核预览。发布前配置可用的 PostgreSQL `pg_dump` 路径（`PG_DUMP_PATH`），再使用实际预览目录：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/ingest_documents.py --publish --from-preview 'data/ocr_runs/实际预览目录'
+```
+
+`--new-library` 只适用于已放入公开知识来源清单及其 PDF 的本机资料；这些资料未包含在公开仓库中。完整步骤、复核JSON格式和参数见 [OCR使用说明](backend/docs/ocr_ingestion.md)。迁移脚本仅补充OCR版本表，不负责创建项目全部基础业务表。
+
 ## 测试
 
 ```powershell
 cd backend
+.\.venv\Scripts\python.exe scripts/setup_context_tokenizer.py
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
+
+本机最近一轮完整自动回归为76项，其中24项覆盖新增OCR逻辑；前端类型检查和构建通过。真实扫描资料验收处理了36页，发布54个正文/表格切片；另有18个图示区域仍待复核。这些是本机验收记录，不代表克隆仓库后已包含知识库数据，也不代表全文无损或全量召回率已验证。
+
+额外的PG事务验证可运行 `scripts/test_ocr_publication_pg.py`：它会创建和清理隔离schema，需要相应权限；不应在未理解测试范围时直接对共享生产环境执行。
 
 记忆测试入口为 `scripts/run_memory_suite.py`；先使用 `--help` 查看参数。部分测试会访问真实PG临时schema和外部模型，需配置数据库权限，并可能产生接口费用。
 
@@ -237,5 +308,6 @@ cd backend
 
 - 为排障保留业务执行超时关闭的配置；生产环境需要重新确定超时、配额及容量边界。
 - 流式问答当前未接入同步流程中的完整引用及覆盖度审核。
-- 文档级权限、知识版本发布和完整数据库迁移仍需补齐。
+- 已具备本地OCR复核与版本化事务发布；文档级权限、完整企业审批及空库初始化迁移仍需补齐。
+- 图像输入当前经OCR转换成文本；没有图像向量检索，图示的视觉关系尚不自动参与回答。
 - Token预算采用参考编码加安全余量，不等于DeepSeek精确计费Token。

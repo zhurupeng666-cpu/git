@@ -1,0 +1,7 @@
+# 安装到独立Python 3.11环境，不安装到现有后端.venv。
+paddlepaddle==3.2.2
+paddleocr[doc-parser]==3.3.2
+paddlex[ocr]==3.3.13
+pypdf==6.20.1
+pypdfium2==5.14.0
+pillow==12.3.0

@@ -22,6 +22,7 @@ SUPPORTED_EXTENSIONS = {
     ".pptx",
     ".txt",
     ".md",
+    ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp",
 }
 
 
@@ -31,6 +32,10 @@ SUPPORTED_EXTENSIONS = {
 
 def load_pdf(file_path: Path) -> List[Document]:
 
+    from src.ingestion.pdf_page_parser import inspect_pdf
+    if any(page["mode"] in ("ocr", "mixed") for page in inspect_pdf(file_path)):
+        from src.ingestion.pdf_chunker import split_pdf_by_page
+        return split_pdf_by_page(str(file_path), file_path.parent.name)
     loader = PyPDFLoader(str(file_path))
 
     documents = loader.load()
@@ -121,6 +126,10 @@ def load_single_file(file_path: Path) -> List[Document]:
 
     elif suffix in {".txt", ".md"}:
         documents = load_text(file_path)
+
+    elif suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}:
+        from src.ingestion.ingestion_service import parse_document
+        documents = parse_document(file_path, root=file_path.parent)["chunks"]
 
     else:
         print(f"[跳过] 暂不支持文件：{file_path}")

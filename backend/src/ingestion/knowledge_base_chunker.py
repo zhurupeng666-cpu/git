@@ -17,6 +17,9 @@ def generate_chunk_id(
     """
 
     metadata = chunk.metadata
+    # OCR切片ID已包含文档版本、区域及内容校验值，不能再覆盖成每页一个ID。
+    if metadata.get("parser_version") and metadata.get("chunk_id"):
+        return metadata["chunk_id"]
 
     source = metadata.get(
         "source",
@@ -86,6 +89,8 @@ def build_knowledge_base_chunks(
     root_path = Path(root_path)
 
     all_chunks = []
+    from src.ingestion.ingestion_service import IMAGE_SUFFIXES, library_links, parse_document
+    linked_images, _ = library_links(root_path)
     # ========================================================
     # 遍历整个知识库
     # ========================================================
@@ -111,7 +116,10 @@ def build_knowledge_base_chunks(
             root_path
         )
 
-        domain = relative_path.parts[0]
+        domain = relative_path.parts[0] if len(relative_path.parts) > 1 else "general"
+        # 配套知识图与PDF属于同一来源，默认只发布关联PDF，避免重复加权。
+        if relative_path.as_posix() in linked_images:
+            continue
 
         # ====================================================
         # PDF
@@ -141,6 +149,10 @@ def build_knowledge_base_chunks(
             all_chunks.extend(
                 chunks
             )
+
+        elif file_path.suffix.lower() in IMAGE_SUFFIXES:
+            parsed = parse_document(file_path, root=root_path)
+            all_chunks.extend(parsed["chunks"])
 
     # ============================================================
     # 为所有 Chunk 添加稳定唯一 ID
